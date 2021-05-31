@@ -1,0 +1,424 @@
+---
+title: "Machine Learning Classification at Telemarketing"
+author: "Daniel Lumban Gaol"
+date: "5/3/2021"
+output: 
+  html_document:
+    theme: flatly
+    higlight: zenburn
+    toc: true
+    toc_float:
+      collapsed: false
+    number_sections: true
+    df_print: paged
+---
+
+
+
+
+
+
+```{r setup, include=FALSE}
+# clear-up the environment
+rm(list = ls())
+
+# chunk options
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>"
+)
+
+options(scipen = 999)
+
+
+
+```
+
+
+```{r, out.width = "100%", echo = FALSE, fig.align = "center"}
+knitr::include_graphics("tele.jpg")
+```
+
+
+# Case
+
+At a bank in Portugal wants to predict what kind of prospective customer will buy a product from the bank when called by the bank, the purpose of this prediction is to help the telemarketing team to find out which customer will buy the product for yes or no based on campaign data. the marketing.
+
+# Library
+```{r}
+library(dplyr)
+library(caret)
+library(inspectdf)
+library(gridExtra)
+library(GGally)
+library(rsample)
+library(e1071)
+library(ROCR)
+```
+
+# Read Data
+The data is related with direct marketing campaigns of a Portuguese banking institution. The marketing campaigns were based on phone calls. Often, more than one contact to the same client was required, in order to access if the product (bank term deposit) would be ('yes') or not ('no') subscribed.
+```{r}
+customer <- read.csv("bank-full.csv")
+head(customer)
+```
+
+Column description :
+
+age : Age   
+
+job : type of job   
+
+marital :  marital status (category)   
+
+education : Categorical of education   
+
+default : has credit in default   
+
+balance : Saldo   
+
+housing : Categorical of has housing loan   
+
+loan : Personal loan   
+
+contact : contact communication type   
+
+day : last contact of day   
+
+month : last contact month of year   
+
+duration : last contact duration, in seconds (numeric)   
+
+campaign : number of contacts performed during this campaign and for this client   
+
+pdays : number of days that passed by after the client was last contacted from a previous campaign   
+
+previous : number of contacts performed before this campaign and for this client   
+
+poutcome : outcome of the previous marketing campaign   
+
+y : the client subscribed a term deposit   
+
+# Data Wrangling
+
+
+```{r}
+glimpse(customer)
+```
+```{r}
+cust <- customer %>% 
+  mutate_if(is.character, as.factor)
+```
+
+inspect missing value
+```{r}
+colSums(is.na(cust))
+```
+
+In this study we will focus on numerical predictor data, so we will delete the job, martial, education, contact, income data columns
+```{r}
+cust_clean <- cust %>% 
+  select(-c("job","marital","education","contact","poutcome"))
+```
+
+
+
+On data that is binary option category, we will make it class 0 and 1,and we enter it into the processing data
+```{r}
+transform <- model.matrix(y ~ ., data = cust_clean) %>% 
+  as.data.frame() %>% 
+  select(c("defaultyes","housingyes","loanyes"))
+```
+
+
+```{r}
+cust_clean$default <- transform$defaultyes
+cust_clean$housing <- transform$housingyes
+cust_clean$loan <- transform$loanyes
+head(cust_clean)
+```
+
+
+# Exploratory Data Analysis
+```{r}
+ggcorr(cust_clean ,hjust = 1, layout.exp = 2, label = T, label_size = 2.9)
+```
+From the data above, all predictors that have a strong enough relationship are only `pdays` and` previous`, so it is still possible to use the Naive Bayes model.
+
+
+```{r}
+#Proportion of target variables before training data
+prop.table(table(cust_clean$y))
+```
+
+> Cross Validation
+
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(100)
+index <- initial_split(data = cust_clean, prop = 0.8, strata ="y")
+
+cust_train <- training(index)
+cust_test <- testing(index)
+```
+
+
+Proporsi data
+```{r}
+#Proportion of target variables after training data
+prop.table(table(cust_train$y))
+```
+After training data, the proportion of data still has the same proportion as the data before training, because the proportion of data is not balanced, we will use 'downSample' for data balancing
+
+```{r}
+set.seed(100)
+
+down_cust <- downSample(x = cust_train %>% select(-y),
+                     y = cust_train$y,
+                     yname = "y")
+                     
+prop.table(table(down_cust$y))
+```
+
+
+# Modeling
+
+## Naive Bayes
+
+```{r}
+cust_naive <- naiveBayes(x = down_cust %>% select(-y),
+                         y = down_cust$y,
+                         laplace = 1)
+```
+
+
+We can also interpret one of the predictors to find out the proportion of the class
+```{r}
+prop.table(table(down_cust$y, down_cust$month)) %>% 
+  as.data.frame() %>% 
+  rename(Class = Var1, Month = Var2)
+```
+From the results above, it can be concluded that the class proportion of customers in the month `apr` for no = 3% and for yes = 5%
+
+
+## Naive Bayes Model Evaluation
+
+```{r}
+#model fitting
+cust_pred <- predict(cust_naive, newdata = cust_test, type = "class")#for the class prediction
+```
+
+
+Evaluate the model with confusion matrix
+```{r}
+confusionMatrix(cust_pred, cust_test$y, positive = "yes")
+```
+From the evaluation results above, the Naive Bayes model gets 76% accuracy, 30% precision, recall, 78% in the positive class `Yes`
+
+> ROC
+
+Bentuk Probability dari hasil prediksi
+
+```{r}
+cust_prob <- predict(cust_naive, newdata = cust_test, type = "raw")#for the probability
+round(head(cust_prob),4)
+```
+
+> Objek ROC
+
+
+```{r}
+#Objek Prediction
+cust_roc <- prediction(predictions = cust_prob[,2], # = kelas positif
+                       labels = as.numeric(cust_test$y == "yes")) # label kelas positif
+        
+#Objec performance dari prediction
+perf <- performance(prediction.obj = cust_roc,
+                    measure = "tpr",
+                    x.measure = "fpr")
+#plot
+plot(perf, main = "ROC")
+abline(0,1, lty =2)
+``` 
+
+## Area Under Curve (AUC)
+
+```{r}
+auc <- performance(prediction.obj = cust_roc,
+                   measure = "auc")
+auc@y.values
+```
+The ROC is a probability curve representing the degree or measure of separation. This tells how much the model is able to differentiate between classes. The closer the curve reaches to the top left of the plot (true positive high and false positive low), the better our model will be. The higher the AUC score, the better the model will separate the target classes
+
+
+# Decision Tree
+
+## Model Fitting
+
+In the fitting model we will use `mincriterion` = 0.95, where the p-value must be below 0.05 for a node to create branches. Then `minsplit` = 500 or the minimum number of observations after splitting. And `minbucket` = 1200 as the minimum number of observations in the terminal node.
+
+```{r fig.width= 10}
+library(partykit)
+cust_tree <- ctree(formula = y ~ ., data = down_cust,
+                   control = ctree_control(mincriterion = 0.5,
+                                           minsplit = 500,
+                                           minbucket = 1200))
+                                          
+plot(cust_tree, type = "simple")
+```
+From the plot decision tree above, it can be seen that 1 is the `Root Node`, 2,5 and 6 are the` Internal Node` and 3,4,7,8,9 are the` Leaf Nodes`
+
+
+```{r}
+predict.DT <- predict(cust_tree, newdata = cust_test)# For the class
+predict.prob.DT <- predict(cust_tree, newdata = cust_test, type = "prob")# For the probability
+```
+
+```{r}
+confusionMatrix(predict.DT, cust_test$y, positive = "yes")
+```
+From the results of the decision tree model confusion matrix, it can be seen that there is an increase in the accuracy value to 81%. Furthermore, the results of the confusion matrix will be evaluated using `ROC` and` AUC` to find out how well the model classifies the two classes.
+
+```{r}
+#Objek Prediction
+dt_roc <- prediction(predictions = predict.prob.DT[,2], # = kelas positif
+                       labels = as.numeric(cust_test$y == "yes")) # label kelas positif
+        
+#Objec performance dari prediction
+dt_perf <- performance(prediction.obj = dt_roc,
+                    measure = "tpr",
+                    x.measure = "fpr")
+#plot
+plot(dt_perf, main = "ROC")
+abline(0,1, lty =2)
+```
+
+```{r}
+dt_auc <- performance(prediction.obj = dt_roc,
+                   measure = "auc")
+dt_auc@y.values
+```
+
+# Random Forest
+
+One of the weaknesses of random forest is that the modeling takes a long time, so the model will be saved in the form of an RDS file with the function `saveRDS ()` so that the model can be used immediately without having to train before.
+
+## Data Prepocessing
+
+```{r}
+#discarding columns with low or close to 0 variance, so that they are not eligible to be used as predictors
+
+n0_var <- nearZeroVar(down_cust)
+down_cust <- down_cust[, -n0_var]
+dim(down_cust)
+```
+
+```{r}
+#model building
+# set.seed(2018)
+# ctrl <- trainControl(method="repeatedcv", number=4, repeats=3) # k-fold cross validation
+# forest <- train(y ~ ., data=down_cust, method="rf", trControl = ctrl)
+# saveRDS(forest, "model.random.forest.rds")
+```
+ 
+
+```{r}
+model_forest <- readRDS("model.random.forest.rds")
+model_forest
+```
+From the model summary,the optimum number of variables considered for splitting at each tree node `mtry` is 10 because the highest accuracy. We can also inspect the importance of each variable that was used in our random forest using varImp().
+
+
+```{r}
+Var_imp <- varImp(model_forest)
+plot(Var_imp)
+```
+
+From the result, the importance variable can be interpreted into a plot, where the importance variable above is the `duration` variable.
+
+
+
+When using random forest - we are not required to split our dataset into train and test sets because random forest already has out-of-bag estimates (OOB) which act as a reliable estimate of the accuracy on unseen examples. Although, it is also possible to hold out a regular train-test cross-validation. For example, the OOB we achieved (in the summary below) was generated from our wine_train dataset.
+
+```{r}
+plot(model_forest$finalModel)
+legend("topright", colnames(model_forest$finalModel$err.rate),col=1:6,cex=0.8,fill=1:6)
+```
+
+
+```{r}
+model_forest$finalModel
+```
+
+```{r}
+predict.forest <- predict(model_forest, cust_test, type = "raw")# for the class prediction
+predict.prob.forest <- predict(model_forest, cust_test, type = "prob")# for the probability
+cm_forest <- confusionMatrix(predict.forest, cust_test$y, positive = "yes")
+cm_forest
+```
+
+```{r}
+#Objek Prediction
+forest_roc <- prediction(predictions = predict.prob.forest[,2], # = kelas positif
+                       labels = as.numeric(cust_test$y == "yes")) # label kelas positif
+        
+#Objec performance dari prediction
+forest_perf <- performance(prediction.obj = forest_roc,
+                    measure = "tpr",
+                    x.measure = "fpr")
+#plot
+plot(forest_perf, main = "ROC")
+abline(0,1, lty =2)
+```
+
+
+```{r}
+forest_auc <- performance(prediction.obj = forest_roc,
+                   measure = "auc")
+forest_auc@y.values
+```
+Based on the results of confusion matrix from random forest, the algorithm gives a good result with an accuracy of 81% and a recall of 87% in the target class positive = `yes`. The value of the AUC also has a high yield of 90% compared to the two previous models.
+
+> the prediction results of the three models in the test data against the positive`yes` class
+ 
+```{r}
+cust_test$predict.naive <- cust_pred
+cust_test$predict.DT <- predict.DT
+cust_test$predict.forest <- predict.forest
+cust_test %>% 
+  select(y,predict.naive, predict.DT, predict.forest) %>% 
+  filter(y == "yes") %>% 
+  head(5)
+```
+
+```{r}
+df1 <- data.frame(model = c("Naive Bayes","Decision Tree","Random Forest"),
+                    accuracy = c(0.7618,0.8197,0.8165),
+                    sensitivity = c(0.78808,0.68023,0.8751),
+                    specificity = c(0.75827,0.83818,0.8087),
+                    precision = c(0.30148,0.35753,0.3772),
+                    AUC = c(0.8302735,0.8138376,0.9041757)
+               )
+df1
+```
+
+
+# Conclusion 
+
+Based on the results of the three models, the data model from random forest has better results, in addition to high accuracy and also the value of AUC and sensitivity or recall, because in this case the target class is the customer buying the product `yes` of course if recalled. This high model proves that the model has a small number in `False Positive` or a prediction of `no` but actually 'yes'.
+
+
+
+
+
+
+
+
+
+
+
+
+
+

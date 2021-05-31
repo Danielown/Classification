@@ -1,0 +1,220 @@
+---
+title: "Untitled"
+author: "Daniel"
+date: "5/12/2021"
+output: html_document
+---
+
+```{r}
+# clear-up the environment
+rm(list = ls())
+
+# chunk options
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>"
+)
+
+options(scipen = 999)
+
+```
+
+```{r}
+library(dplyr)
+library(caret)
+library(inspectdf)
+library(ggplot2)
+library(gridExtra)
+library(GGally)
+library(rsample)
+library(e1071)
+library(ROCR)
+library(lubridate)
+```
+
+```{r}
+cus <- read.csv("bank-full.csv")
+glimpse(cus)
+```
+```{r}
+cus1 <- cus %>% 
+  mutate_if(is.character, as.factor)
+```
+
+```{r}
+head(cus1)
+```
+
+```{r}
+custfix <- cus1 %>% 
+  select(-c("job","marital","education","contact","poutcome"))
+head(custfix,10)
+```
+
+```{r}
+transform <- model.matrix(y ~ ., data = custfix) %>% 
+  as.data.frame() %>% 
+  select(c("defaultyes","housingyes","loanyes"))
+```
+
+```{r}
+transform
+```
+
+```{r}
+custfix$default <- transform$defaultyes
+custfix$housing <- transform$housingyes
+custfix$loan <- transform$loanyes
+
+```
+
+```{r}
+head(custfix)
+levels(custfix$month)
+```
+```{r}
+custfix
+```
+
+
+> Cross validation
+
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(100)
+index <- initial_split(data = custfix, prop = 0.8, strata ="y")
+
+cust_train <- training(index)
+cust_test <- testing(index)
+```
+
+```{r}
+prop.table(table(cust_train$y))
+```
+```{r}
+set.seed(100)
+
+up_train <- downSample(x = cust_train %>% select(-y),
+                     y = cust_train$y,
+                     yname = "y")
+                     
+prop.table(table(up_train$y))
+```
+```{r}
+up_train
+```
+
+
+```{r}
+cust_naive <- naiveBayes(x = up_train %>% select(-y),
+                         y = up_train$y,
+                         laplace = 1)
+```
+
+
+```{r}
+cust_naive
+```
+
+```{r}
+cust_pred <- predict(cust_naive, newdata = cust_test, type = "class")
+```
+
+
+```{r}
+cust_test$predik <- cust_pred
+cust_test %>% 
+  select(y,predik) %>% 
+  filter(y == "yes") %>% 
+  head(6)
+```
+
+
+```{r}
+confusionMatrix(cust_pred, cust_test$y, positive = "yes")
+```
+
+```{r fig.width=15}
+library(partykit)
+cust_tree <- ctree(formula = y ~ ., data = up_train,
+                   control = ctree_control(mincriterion = 0.5,
+                                           minsplit = 700,
+                                           minbucket = 1000))
+                                          
+plot(cust_tree, type = "simple")
+```
+```{r}
+prop <- predict(cust_tree, newdata = cust_test, type = "prob")
+```
+
+
+```{r}
+cust_tuned <- predict(cust_tree, newdata = cust_test)
+
+confusionMatrix(cust_tuned, cust_test$y, positive = "yes")
+```
+
+```{r}
+a <- prediction(predictions = prop[,2], # = kelas positif
+                       labels = as.numeric(cust_test$y == "yes")) # label kelas positif
+        
+#Objec performance dari prediction
+perf <- performance(prediction.obj = a,
+                    measure = "tpr",
+                    x.measure = "fpr")
+#plot
+plot(perf)
+abline(0,1, lty =2)
+```
+
+```{r}
+auc <- performance(prediction.obj = a,
+                   measure = "auc")
+auc@y.values
+```
+```{r}
+dim(up_train)
+```
+
+
+
+
+> RANDOM FOREST
+
+```{r}
+# set.seed(417)
+# ctrl <- trainControl(method="repeatedcv", number=4, repeats=3) # k-fold cross validation
+# forest <- train(y ~ ., data=up_train, method="rf", trControl = ctrl)
+# forest
+# 
+# saveRDS(forest, file = "model_random.forest.rds")
+```
+
+```{r}
+model.forest <- readRDS("model_random.forest.rds")
+```
+
+```{r}
+model.forest$finalModel
+```
+
+
+```{r}
+predict.forest <- predict(model.forest, cust_test, type = "raw")
+cm <- confusionMatrix(data = predict.forest, reference = cust_test$y, positive = "yes")
+
+cm
+```
+
+
+
+
+
+
+
+
+
+
+
